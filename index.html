@@ -220,20 +220,20 @@ const FONDOS = [
 ];
 
 // ── PROXIES ───────────────────────────────────────────────────────────────────
-// Se prueban en orden hasta que uno responda. codetabs es el más permisivo y
-// funciona incluso desde file:// (origen null); allorigins va de respaldo.
-// NOTA: corsproxy.io ya NO funciona desde file:// (exige origen real → 403).
+// Se prueban en orden hasta que uno responda. Desde un origen real (GitHub Pages)
+// corsproxy.io funciona y es el más rápido → va primero. El resto son respaldo
+// por si alguno cae. (Desde file:// nada de esto funciona de forma fiable.)
 const PROXIES = [
-  { url: u => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(u)}`, json: false },
-  { url: u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,        json: false },
-  { url: u => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`,        json: true  },
   { url: u => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,                 json: false },
+  { url: u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,        json: false },
+  { url: u => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(u)}`,  json: false },
+  { url: u => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`,        json: true  },
 ];
 
 async function fetchHTML(url) {
   for (const px of PROXIES) {
     try {
-      const r = await fetch(px.url(url), { signal: AbortSignal.timeout(20000) });
+      const r = await fetch(px.url(url), { signal: AbortSignal.timeout(15000) });
       if (!r.ok) continue;
       if (px.json) {
         const d = await r.json();
@@ -464,21 +464,26 @@ async function iniciar() {
   document.getElementById("notes").innerHTML = "";
   renderRows();
 
-  for (let i = 0; i < FONDOS.length; i++) {
-    const f = FONDOS[i];
-    if (f.bloqueado) continue;
-    try {
-      const html   = await fetchHTML(f.url);
-      const parser = getParser(f.url);
-      const result = parser ? parser(html, f.url) : null;
-      result ? rowOK(i, result) : rowErr(i, "Sin datos (estructura cambiada o bloqueado)");
-    } catch(e) {
-      rowErr(i, e.message);
+  // Consultas en PARALELO, máximo 5 a la vez (rápido sin saturar el proxy).
+  // Las filas se rellenan según van llegando los datos.
+  const pend = FONDOS.map((f, i) => ({ f, i })).filter(x => !x.f.bloqueado);
+  let cursor = 0;
+  async function worker() {
+    while (cursor < pend.length) {
+      const { f, i } = pend[cursor++];
+      try {
+        const html   = await fetchHTML(f.url);
+        const parser = getParser(f.url);
+        const result = parser ? parser(html, f.url) : null;
+        result ? rowOK(i, result) : rowErr(i, "Sin datos (estructura cambiada o bloqueado)");
+      } catch(e) {
+        rowErr(i, e.message);
+      }
+      done++;
+      setProgress(done, total);
     }
-    done++;
-    setProgress(done, total);
-    await sleep(500);
   }
+  await Promise.all(Array.from({ length: 5 }, worker));
 
   document.getElementById("last-update").textContent =
     "Última actualización: " + new Date().toLocaleString("es-ES");
