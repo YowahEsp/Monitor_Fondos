@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Monitor de Fondos</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:      #080c14;
+  --surface: #111827;
+  --surf2:   #1b2337;
+  --border:  #1e2d45;
+  --text:    #e2e8f0;
+  --muted:   #64748b;
+  --accent:  #3b82f6;
+  --pos:     #10b981;
+  --neg:     #ef4444;
+  --pos-bg:  rgba(16,185,129,.12);
+  --neg-bg:  rgba(239,68,68,.12);
+  --warn:    #f59e0b;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: 'DM Sans', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+}
+/* ── CABECERA ────────────────────────────── */
+header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 18px 28px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.title-block { flex: 1; min-width: 180px; }
+h1 {
+  font-family: 'Syne', sans-serif;
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -.4px;
+  color: #fff;
+}
+h1 em { color: var(--accent); font-style: normal; }
+#last-update {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 3px;
+}
+#progress {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.btn {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  padding: 8px 18px;
+  border-radius: 7px;
+  cursor: pointer;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  transition: background .2s, transform .1s;
+  white-space: nowrap;
+}
+.btn:hover:not(:disabled) { background: #2563eb; }
+.btn:active:not(:disabled) { transform: scale(.97); }
+.btn:disabled { background: var(--muted); cursor: not-allowed; }
+.spin { display: inline-block; font-size: 15px; line-height: 1; }
+.spin.go { animation: giro 1s linear infinite; }
+@keyframes giro { to { transform: rotate(360deg); } }
+/* ── CONTENIDO ────────────────────────────── */
+main { padding: 24px 28px; max-width: 1180px; margin: 0 auto; }
+/* ── TABLA ────────────────────────────────── */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  overflow-x: auto;
+}
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+thead { background: var(--surf2); }
+th {
+  padding: 11px 16px;
+  text-align: left;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+th.r { text-align: right; }
+td {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  vertical-align: middle;
+}
+tr:last-child td { border-bottom: none; }
+.clickable:hover td { background: rgba(255,255,255,.025); cursor: pointer; }
+/* ── CELDAS ─────────────────────────────── */
+.c-name { font-weight: 500; color: #e2e8f0; max-width: 280px; }
+.c-name small { display: block; font-size: 10.5px; color: var(--muted); font-weight: 400; margin-top: 1px; }
+.c-isin  { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--muted); }
+.c-fecha { font-family: 'JetBrains Mono', monospace; font-size: 11.5px; color: var(--muted); }
+.c-nav   { font-family: 'JetBrains Mono', monospace; font-size: 13.5px; font-weight: 600; text-align: right; }
+.c-pct   { text-align: right; white-space: nowrap; }
+.pill {
+  display: inline-block;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 5px;
+}
+.pill.pos { color: var(--pos); background: var(--pos-bg); }
+.pill.neg { color: var(--neg); background: var(--neg-bg); }
+.pill.neu { color: var(--muted); }
+.badge {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: var(--surf2);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+/* ── ESTADOS ─────────────────────────────── */
+@keyframes shimmer { 0%,100%{opacity:.35} 50%{opacity:.85} }
+.sh { animation: shimmer 1.5s ease-in-out infinite; color: var(--muted); }
+@keyframes fadeSlide { from{opacity:0;transform:translateY(5px)} to{opacity:1;transform:none} }
+.row-ok td { animation: fadeSlide .3s ease forwards; }
+.row-err .c-err { font-size: 10.5px; color: var(--warn); }
+.row-block { opacity: .5; }
+/* ── NOTAS ────────────────────────────────── */
+.notes {
+  margin-top: 14px;
+  font-size: 11.5px;
+  color: var(--muted);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 0 2px;
+  line-height: 1.5;
+}
+.notes b { color: var(--text); }
+@media(max-width:640px) {
+  main { padding: 14px; }
+  header { padding: 14px; }
+  td, th { padding: 9px 10px; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="title-block">
+    <h1>Monitor de <em>Fondos</em></h1>
+    <div id="last-update">Abriendo…</div>
+  </div>
+  <div id="progress"></div>
+  <button class="btn" id="btnRef" onclick="iniciar()">
+    <span class="spin" id="ico">⟳</span> Actualizar
+  </button>
+</header>
+
+<main>
+  <div class="card">
+    <table>
+      <thead>
+        <tr>
+          <th>Fondo</th>
+          <th>ISIN</th>
+          <th>Fecha NAV</th>
+          <th class="r">NAV</th>
+          <th class="r">Var. %</th>
+          <th>Fuente</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+  <div class="notes" id="notes"></div>
+</main>
+
+<script>
+// ── FONDOS ────────────────────────────────────────────────────────────────────
+const FONDOS = [
+  { url: "https://markets.ft.com/data/funds/tearsheet/summary?s=ES0146309002:EUR" },
+  { url: "https://markets.ft.com/data/funds/tearsheet/summary?s=ES0119199000:EUR" },
+  { url: "https://markets.ft.com/data/funds/tearsheet/summary?s=ES0112611001:EUR" },
+  { url: "https://markets.ft.com/data/funds/tearsheet/summary?s=IE00BH6XSF26:EUR" },
+  { url: "https://www.fundsquare.net/security/price?idInstr=6048" },
+  { url: "https://www.avl-investmentfonds.de/fonds/details/LU2338974699" },
+  { url: "https://www.avl-investmentfonds.de/fonds/details/IE00BK5TW727" },
+  { url: "https://markets.ft.com/data/funds/tearsheet/summary?s=IE0031574647:EUR" },
+  { url: "https://markets.ft.com/data/funds/tearsheet/summary?s=LU0147943442:EUR" },
+  { url: "https://www.fundsquare.net/security/summary?idInstr=322835" },
+  { url: "https://www.fundsquare.net/security/summary?idInstr=5948" },
+  { url: "https://www.fundsquare.net/security/price?idInstr=117231" },
+  { url: "https://www.avl-investmentfonds.de/fonds/details/LU0757431738" },
+  { url: "https://markets.ft.com/data/funds/tearsheet/summary?s=IE00BGHQF524:EUR" },
+  { url: "https://markets.ft.com/data/funds/tearsheet/summary?s=IE00BDR0JY05:EUR" },
+  { url: "bloqueado:N5116:SM", bloqueado: true, nombre: "N5116:SM", nota: "Bloomberg — scraping prohibido" },
+];
+
+// ── PROXIES ───────────────────────────────────────────────────────────────────
+// Se prueban en orden hasta que uno responda. codetabs es el más permisivo y
+// funciona incluso desde file:// (origen null); allorigins va de respaldo.
+// NOTA: corsproxy.io ya NO funciona desde file:// (exige origen real → 403).
+const PROXIES = [
+  { url: u => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(u)}`, json: false },
+  { url: u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,        json: false },
+  { url: u => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`,        json: true  },
+  { url: u => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,                 json: false },
+];
+
+async function fetchHTML(url) {
+  for (const px of PROXIES) {
+    try {
+      const r = await fetch(px.url(url), { signal: AbortSignal.timeout(20000) });
+      if (!r.ok) continue;
+      if (px.json) {
+        const d = await r.json();
+        if (d.contents && d.contents.length > 400) return d.contents;
+      } else {
+        const t = await r.text();
+        if (t.length > 400) return t;
+      }
+    } catch(_) { /* probar el siguiente proxy */ }
+  }
+  throw new Error("Bloqueado (mejor desde GitHub Pages, no con file://)");
+}
+
+// ── PARSERS ────────────────────────────────────────────────────────────────────
+const ISIN_RE = /\b([A-Z]{2}[A-Z0-9]{9}\d)\b/;
+
+/* Fundsquare: td "Last NAV" | fecha | "NAV DIV ±%" */
+function parseFundsquare(html, url) {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const title = doc.title || "";
+  const parts  = title.split("|").map(s => s.trim());
+  const ii = parts.findIndex(p => { const m = ISIN_RE.exec(p); return m && m[0] === p; });
+  const isin   = ii >= 0 ? parts[ii] : (ISIN_RE.exec(title)||[])[1] || "?";
+  const nombre = (ii >= 0 && ii + 1 < parts.length) ? parts[ii + 1] : isin;
+
+  const tds = [...doc.querySelectorAll("td")];
+  const idx = tds.findIndex(td => td.textContent.trim() === "Last NAV");
+  if (idx < 0 || !tds[idx+1] || !tds[idx+2]) return null;
+
+  const fecha   = tds[idx+1].textContent.trim();
+  const navCell = tds[idx+2].textContent.replace(/\s+/g, " ").trim();
+  const m = navCell.match(/([\d.,]+)\s+([A-Z]{3})\s+([-+]?[\d.,]+)\s*%/);
+  if (!m) return null;
+
+  return { isin, nombre, fecha,
+    nav: m[1].replace(",",""),   // Anglo format: quitar coma de miles
+    var_pct: m[3] + "%", divisa: m[2], fuente: "Fundsquare" };
+}
+
+/* AVL: "Aktueller Kurs (DD.MM.YYYY) ±chg EUR (±pct %) price EUR" */
+function parseAVL(html, url) {
+  const doc  = new DOMParser().parseFromString(html, "text/html");
+  const title = doc.title || "";
+  const parts = title.split("|").map(s => s.trim());
+  const ii = parts.findIndex(p => { const m = ISIN_RE.exec(p); return m && m[0] === p; });
+  const isin   = ii >= 0 ? parts[ii] : (ISIN_RE.exec(url)||[])[1] || "?";
+  const nombre = (ii > 0) ? parts[ii-1] : isin;
+  const txt    = doc.body.textContent.replace(/\s+/g, " ");
+
+  // Bloque completo (sección inferior de la página)
+  let m = txt.match(
+    /Aktueller Kurs\s*\((\d{2}\.\d{2}\.\d{4})\)\s*[-+]?[\d.]+,\d+\s*EUR\s*\(([-+]?[\d.]+,\d+)\s*%\)\s*([\d.]+,\d+)\s*EUR/
+  );
+  if (m) return { isin, nombre,
+    fecha:   m[1].replace(/\./g,"/"),
+    nav:     m[3].replace(".","").replace(",","."),
+    var_pct: m[2].replace(",",".")+"%", divisa:"EUR", fuente:"AVL" };
+
+  // Plan B: precio aparece ANTES de "Aktueller Kurs" (sección superior)
+  const md = txt.match(/Aktueller Kurs\s*\((\d{2}\.\d{2}\.\d{4})\)/);
+  const mp = txt.match(/([\d.]+,\d+)\s*EUR\s*Aktueller Kurs/);
+  const mc = txt.match(/\(([-+]?\d+,\d+)\s*%\)/);
+  if (!md || !mp) return null;
+  return { isin, nombre,
+    fecha:   md[1].replace(/\./g,"/"),
+    nav:     mp[1].replace(".","").replace(",","."),
+    var_pct: mc ? mc[1].replace(",",".")+"%":"N/D", divisa:"EUR", fuente:"AVL" };
+}
+
+/* Financial Times: pares label/value */
+function parseFT(html, url) {
+  const doc  = new DOMParser().parseFromString(html, "text/html");
+  const im   = url.match(/[?&]s=([A-Za-z0-9]+):/i);
+  const isin = im ? im[1].toUpperCase() : "?";
+  const h1   = doc.querySelector("h1");
+  const nombre = h1 ? h1.textContent.replace(/\s+/g," ").trim() : isin;
+
+  const pares = {};
+  doc.querySelectorAll("li, .mod-ui-data-list__item").forEach(el => {
+    const lab = el.querySelector(".mod-ui-data-list__label");
+    const val = el.querySelector(".mod-ui-data-list__value");
+    if (lab && val) pares[lab.textContent.trim().toLowerCase()] = val.textContent.trim();
+  });
+
+  const navK = Object.keys(pares).find(k => k.includes("price"));
+  const chgK = Object.keys(pares).find(k => k.includes("today's change") || k.includes("day change"));
+  const nav  = navK ? pares[navK].replace(",","") : null;
+  if (!nav) return null;
+
+  const vm = chgK ? (pares[chgK]||"").match(/([-+]?\d+(?:[.,]\d+)?)\s*%/) : null;
+  const var_pct = vm ? vm[1]+"%":"N/D";
+
+  const txt    = doc.body.textContent;
+  const fechaM = txt.match(/as of\s+([A-Za-z]{3}\s+\d{1,2}\s+\d{4})/i);
+  const fecha  = fechaM ? ftFecha(fechaM[1]) : "N/D";
+  return { isin, nombre, fecha, nav, var_pct, divisa:"EUR", fuente:"FT" };
+}
+
+const MES = {Jan:"01",Feb:"02",Mar:"03",Apr:"04",May:"05",Jun:"06",
+             Jul:"07",Aug:"08",Sep:"09",Oct:"10",Nov:"11",Dec:"12"};
+function ftFecha(s) {
+  const m = s.match(/([A-Za-z]{3})\s+(\d{1,2})\s+(\d{4})/);
+  return m ? `${m[2].padStart(2,"0")}/${MES[m[1]]||"??"}/${m[3]}` : s;
+}
+
+function getParser(url) {
+  if (url.includes("markets.ft.com"))        return parseFT;
+  if (url.includes("fundsquare.net"))        return parseFundsquare;
+  if (url.includes("avl-investmentfonds.de"))return parseAVL;
+  return null;
+}
+
+// ── FORMATO ────────────────────────────────────────────────────────────────────
+function fmtNav(nav, div) {
+  const n = parseFloat(nav);
+  if (isNaN(n)) return nav;
+  return n.toLocaleString("es-ES",{minimumFractionDigits:2,maximumFractionDigits:4})
+    + " " + (div||"EUR");
+}
+function fmtPct(pct) {
+  if (!pct || pct==="N/D")
+    return '<span class="pill neu">—</span>';
+  const m = pct.match(/([-+]?)([\d.]+)%/);
+  if (!m) return `<span class="pill neu">${esc(pct)}</span>`;
+  const n = parseFloat(m[1]+m[2]);
+  const cls = n>0?"pos":n<0?"neg":"neu";
+  const lbl = (n>0?"+":"") +
+    n.toLocaleString("es-ES",{minimumFractionDigits:2,maximumFractionDigits:2})+" %";
+  return `<span class="pill ${cls}">${lbl}</span>`;
+}
+
+// ── UTILIDADES ─────────────────────────────────────────────────────────────────
+function esc(s){ return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+
+function isinHint(url) {
+  const m1 = url.match(/[?&]s=([A-Za-z0-9]+):/i); if (m1) return m1[1].toUpperCase();
+  const m2 = url.match(/idInstr=(\d+)/);           if (m2) return "id:"+m2[1];
+  const m3 = url.match(/details\/([A-Za-z0-9]+)/); if (m3) return m3[1].toUpperCase();
+  return "—";
+}
+function fuenteLabel(url) {
+  if (url.includes("markets.ft.com"))         return "FT";
+  if (url.includes("fundsquare.net"))         return "Fundsquare";
+  if (url.includes("avl-investmentfonds.de")) return "AVL";
+  return "—";
+}
+function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+
+// ── RENDER ─────────────────────────────────────────────────────────────────────
+function renderRows() {
+  const tbody = document.getElementById("tbody");
+  tbody.innerHTML = "";
+  FONDOS.forEach((f, i) => {
+    const tr = document.createElement("tr");
+    tr.id = "row-"+i;
+    if (f.bloqueado) {
+      tr.className = "row-block";
+      tr.innerHTML = `
+        <td class="c-name">${esc(f.nombre||"—")}<small>${esc(f.nota||"")}</small></td>
+        <td class="c-isin">—</td><td class="c-fecha">—</td>
+        <td class="c-nav">—</td><td class="c-pct">—</td>
+        <td><span class="badge">Bloomberg</span></td>`;
+    } else {
+      const hint = isinHint(f.url);
+      const fLabel = fuenteLabel(f.url);
+      tr.className = "clickable";
+      tr.title = f.url;
+      tr.onclick = () => window.open(f.url, "_blank");
+      tr.innerHTML = `
+        <td class="c-name"><span class="sh">${esc(hint)}</span></td>
+        <td class="c-isin"><span class="sh">—</span></td>
+        <td class="c-fecha"><span class="sh">—</span></td>
+        <td class="c-nav"><span class="sh">—</span></td>
+        <td class="c-pct"><span class="pill neu sh">—</span></td>
+        <td><span class="badge">${fLabel}</span></td>`;
+    }
+    tbody.appendChild(tr);
+  });
+}
+
+function rowOK(i, r) {
+  const tr = document.getElementById("row-"+i);
+  if (!tr) return;
+  tr.className = "row-ok clickable";
+  tr.title = FONDOS[i].url;
+  tr.onclick = () => window.open(FONDOS[i].url, "_blank");
+  tr.innerHTML = `
+    <td class="c-name">${esc(r.nombre)}</td>
+    <td class="c-isin">${esc(r.isin)}</td>
+    <td class="c-fecha">${esc(r.fecha)}</td>
+    <td class="c-nav">${esc(fmtNav(r.nav, r.divisa))}</td>
+    <td class="c-pct">${fmtPct(r.var_pct)}</td>
+    <td><span class="badge">${esc(r.fuente)}</span></td>`;
+}
+
+function rowErr(i, msg) {
+  const tr = document.getElementById("row-"+i);
+  if (!tr) return;
+  const hint = isinHint(FONDOS[i].url);
+  tr.className = "row-err";
+  tr.title = FONDOS[i].url;
+  tr.onclick = () => window.open(FONDOS[i].url, "_blank");
+  tr.innerHTML = `
+    <td class="c-name" style="color:var(--muted)">${esc(hint)}</td>
+    <td class="c-isin">—</td><td class="c-fecha">—</td>
+    <td class="c-nav">—</td><td class="c-pct">—</td>
+    <td><span class="badge">${fuenteLabel(FONDOS[i].url)}</span>
+        <span class="c-err"> ${esc(msg)}</span></td>`;
+}
+
+// ── PROGRESO ───────────────────────────────────────────────────────────────────
+let total = 0, done = 0;
+function setProgress(d, t) {
+  document.getElementById("progress").textContent = d+"/"+t+" fondos";
+}
+function setBusy(b) {
+  document.getElementById("btnRef").disabled = b;
+  document.getElementById("ico").className = "spin" + (b?" go":"");
+}
+
+// ── MAIN ──────────────────────────────────────────────────────────────────────
+async function iniciar() {
+  setBusy(true);
+  done = 0;
+  total = FONDOS.filter(f => !f.bloqueado).length;
+  setProgress(0, total);
+  document.getElementById("last-update").textContent = "Cargando…";
+  document.getElementById("notes").innerHTML = "";
+  renderRows();
+
+  for (let i = 0; i < FONDOS.length; i++) {
+    const f = FONDOS[i];
+    if (f.bloqueado) continue;
+    try {
+      const html   = await fetchHTML(f.url);
+      const parser = getParser(f.url);
+      const result = parser ? parser(html, f.url) : null;
+      result ? rowOK(i, result) : rowErr(i, "Sin datos (estructura cambiada o bloqueado)");
+    } catch(e) {
+      rowErr(i, e.message);
+    }
+    done++;
+    setProgress(done, total);
+    await sleep(500);
+  }
+
+  document.getElementById("last-update").textContent =
+    "Última actualización: " + new Date().toLocaleString("es-ES");
+  setBusy(false);
+
+  document.getElementById("notes").innerHTML = `
+    <span>📂 <b>Si ves "bloqueado" en todo:</b> estás abriendo el archivo con doble clic (file://), y los navegadores limitan esas peticiones. Súbelo a GitHub Pages (como tus otros sitios) y ábrelo desde la URL github.io — ahí los proxies funcionan.</span>
+    <span>⚠ <b>Financial Times (8 fondos):</b> FT aplica anti-bot agresivo y puede fallar aun en GitHub Pages. Esos fondos con ISIN puedes buscarlos también en Fundsquare.</span>
+    <span>⛔ <b>Bloomberg (N5116:SM):</b> prohíbe scraping. Busca el ISIN de ese fondo y añade su URL de FT o Fundsquare en la lista del archivo.</span>
+    <span>💡 Haz clic en cualquier fila para abrir la página original del fondo.</span>`;
+}
+
+// Auto-cargar al abrir
+window.addEventListener("load", iniciar);
+</script>
+</body>
+</html>
