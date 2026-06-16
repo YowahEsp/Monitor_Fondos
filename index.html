@@ -141,6 +141,20 @@ tr:last-child td { border-bottom: none; }
   border: 1px solid var(--border);
   white-space: nowrap;
 }
+/* ── SEPARADOR DE CATEGORÍA ──────────────── */
+.row-sep td {
+  background: var(--surf2);
+  color: var(--accent);
+  font-family: 'Syne', sans-serif;
+  font-weight: 800;
+  font-size: 12px;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  padding: 9px 16px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.row-sep:hover td { background: var(--surf2); cursor: default; }
 /* ── ESTADOS ─────────────────────────────── */
 @keyframes shimmer { 0%,100%{opacity:.35} 50%{opacity:.85} }
 .sh { animation: shimmer 1.5s ease-in-out infinite; color: var(--muted); }
@@ -160,10 +174,73 @@ tr:last-child td { border-bottom: none; }
   line-height: 1.5;
 }
 .notes b { color: var(--text); }
+/* ── MÓVIL: TABLA → TARJETAS ──────────────── */
 @media(max-width:640px) {
   main { padding: 14px; }
   header { padding: 14px; }
-  td, th { padding: 9px 10px; }
+
+  .card { overflow-x: visible; border: none; background: transparent; }
+  table { font-size: 13.5px; }
+  thead { display: none; }            /* se sustituye por las etiquetas de cada celda */
+
+  table, tbody { display: block; width: 100%; }
+
+  /* cada fila de datos pasa a ser una tarjeta */
+  tr.clickable, tr.row-ok, tr.row-err, tr.row-block {
+    display: block;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 11px;
+    margin-bottom: 12px;
+    overflow: hidden;
+  }
+  tr:last-child td { border-bottom: 1px solid var(--border); }
+
+  td {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 14px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    text-align: right;
+  }
+  td:last-child { border-bottom: none; }
+  td::before {
+    content: attr(data-label);
+    flex: 0 0 auto;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    text-align: left;
+  }
+
+  /* primera celda = cabecera de la tarjeta (nombre del fondo a ancho completo) */
+  td.c-name {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 3px;
+    text-align: left;
+    background: var(--surf2);
+    max-width: none;
+    font-size: 14px;
+  }
+  td.c-name small { margin-top: 0; }
+
+  .c-nav, .c-pct { text-align: right; }
+  .pill { font-size: 12.5px; }
+
+  /* separador de categoría: a ancho completo, sin etiqueta */
+  tr.row-sep { display: block; margin: 4px 0 12px; }
+  .row-sep td {
+    display: block;
+    text-align: center;
+    border-radius: 9px;
+    border: 1px solid var(--border);
+  }
+  .row-sep td::before { content: none; }
 }
 </style>
 </head>
@@ -217,6 +294,11 @@ const FONDOS = [
   { url: "https://markets.ft.com/data/funds/tearsheet/summary?s=IE00BGHQF524:EUR" },
   { url: "https://markets.ft.com/data/funds/tearsheet/summary?s=IE00BDR0JY05:EUR" },
   { url: "bloqueado:N5116:SM", bloqueado: true, nombre: "N5116:SM", nota: "Bloomberg — scraping prohibido" },
+
+  // ── De interés ──────────────────────────────────────────────────────────────
+  { separador: true, titulo: "De interés" },
+  { url: "https://www.fundsquare.net/security/summary?idInstr=268050" },
+  { url: "https://www.fundsquare.net/security/summary?idInstr=233106" },
 ];
 
 // ── PROXIES ───────────────────────────────────────────────────────────────────
@@ -389,13 +471,23 @@ function renderRows() {
   FONDOS.forEach((f, i) => {
     const tr = document.createElement("tr");
     tr.id = "row-"+i;
+
+    if (f.separador) {
+      tr.className = "row-sep";
+      tr.innerHTML = `<td colspan="6">${esc(f.titulo)}</td>`;
+      tbody.appendChild(tr);
+      return;
+    }
+
     if (f.bloqueado) {
       tr.className = "row-block";
       tr.innerHTML = `
-        <td class="c-name">${esc(f.nombre||"—")}<small>${esc(f.nota||"")}</small></td>
-        <td class="c-isin">—</td><td class="c-fecha">—</td>
-        <td class="c-nav">—</td><td class="c-pct">—</td>
-        <td><span class="badge">Bloomberg</span></td>`;
+        <td class="c-name" data-label="Fondo">${esc(f.nombre||"—")}<small>${esc(f.nota||"")}</small></td>
+        <td class="c-isin" data-label="ISIN">—</td>
+        <td class="c-fecha" data-label="Fecha NAV">—</td>
+        <td class="c-nav" data-label="NAV">—</td>
+        <td class="c-pct" data-label="Var. %">—</td>
+        <td data-label="Fuente"><span class="badge">Bloomberg</span></td>`;
     } else {
       const hint = isinHint(f.url);
       const fLabel = fuenteLabel(f.url);
@@ -403,12 +495,12 @@ function renderRows() {
       tr.title = f.url;
       tr.onclick = () => window.open(f.url, "_blank");
       tr.innerHTML = `
-        <td class="c-name"><span class="sh">${esc(hint)}</span></td>
-        <td class="c-isin"><span class="sh">—</span></td>
-        <td class="c-fecha"><span class="sh">—</span></td>
-        <td class="c-nav"><span class="sh">—</span></td>
-        <td class="c-pct"><span class="pill neu sh">—</span></td>
-        <td><span class="badge">${fLabel}</span></td>`;
+        <td class="c-name" data-label="Fondo"><span class="sh">${esc(hint)}</span></td>
+        <td class="c-isin" data-label="ISIN"><span class="sh">—</span></td>
+        <td class="c-fecha" data-label="Fecha NAV"><span class="sh">—</span></td>
+        <td class="c-nav" data-label="NAV"><span class="sh">—</span></td>
+        <td class="c-pct" data-label="Var. %"><span class="pill neu sh">—</span></td>
+        <td data-label="Fuente"><span class="badge">${fLabel}</span></td>`;
     }
     tbody.appendChild(tr);
   });
@@ -421,12 +513,12 @@ function rowOK(i, r) {
   tr.title = FONDOS[i].url;
   tr.onclick = () => window.open(FONDOS[i].url, "_blank");
   tr.innerHTML = `
-    <td class="c-name">${esc(r.nombre)}</td>
-    <td class="c-isin">${esc(r.isin)}</td>
-    <td class="c-fecha">${esc(r.fecha)}</td>
-    <td class="c-nav">${esc(fmtNav(r.nav, r.divisa))}</td>
-    <td class="c-pct">${fmtPct(r.var_pct)}</td>
-    <td><span class="badge">${esc(r.fuente)}</span></td>`;
+    <td class="c-name" data-label="Fondo">${esc(r.nombre)}</td>
+    <td class="c-isin" data-label="ISIN">${esc(r.isin)}</td>
+    <td class="c-fecha" data-label="Fecha NAV">${esc(r.fecha)}</td>
+    <td class="c-nav" data-label="NAV">${esc(fmtNav(r.nav, r.divisa))}</td>
+    <td class="c-pct" data-label="Var. %">${fmtPct(r.var_pct)}</td>
+    <td data-label="Fuente"><span class="badge">${esc(r.fuente)}</span></td>`;
 }
 
 function rowErr(i, msg) {
@@ -437,10 +529,12 @@ function rowErr(i, msg) {
   tr.title = FONDOS[i].url;
   tr.onclick = () => window.open(FONDOS[i].url, "_blank");
   tr.innerHTML = `
-    <td class="c-name" style="color:var(--muted)">${esc(hint)}</td>
-    <td class="c-isin">—</td><td class="c-fecha">—</td>
-    <td class="c-nav">—</td><td class="c-pct">—</td>
-    <td><span class="badge">${fuenteLabel(FONDOS[i].url)}</span>
+    <td class="c-name" data-label="Fondo" style="color:var(--muted)">${esc(hint)}</td>
+    <td class="c-isin" data-label="ISIN">—</td>
+    <td class="c-fecha" data-label="Fecha NAV">—</td>
+    <td class="c-nav" data-label="NAV">—</td>
+    <td class="c-pct" data-label="Var. %">—</td>
+    <td data-label="Fuente"><span class="badge">${fuenteLabel(FONDOS[i].url)}</span>
         <span class="c-err"> ${esc(msg)}</span></td>`;
 }
 
@@ -458,7 +552,7 @@ function setBusy(b) {
 async function iniciar() {
   setBusy(true);
   done = 0;
-  total = FONDOS.filter(f => !f.bloqueado).length;
+  total = FONDOS.filter(f => !f.bloqueado && !f.separador).length;
   setProgress(0, total);
   document.getElementById("last-update").textContent = "Cargando…";
   document.getElementById("notes").innerHTML = "";
@@ -466,7 +560,7 @@ async function iniciar() {
 
   // Consultas en PARALELO, máximo 5 a la vez (rápido sin saturar el proxy).
   // Las filas se rellenan según van llegando los datos.
-  const pend = FONDOS.map((f, i) => ({ f, i })).filter(x => !x.f.bloqueado);
+  const pend = FONDOS.map((f, i) => ({ f, i })).filter(x => !x.f.bloqueado && !x.f.separador);
   let cursor = 0;
   async function worker() {
     while (cursor < pend.length) {
