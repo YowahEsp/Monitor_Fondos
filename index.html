@@ -302,24 +302,34 @@ const FONDOS = [
 ];
 
 // ── PROXIES ───────────────────────────────────────────────────────────────────
-// Estado a 2026: corsproxy.io sigue siendo gratis desde orígenes *.github.io
-// (no necesita API key ahí), pero aplica rate-limit agresivo y tope de 1 MB por
-// respuesta. allorigins va lento y se satura con facilidad; codetabs limita a
-// ~5 req/s; cors.x2u.in ~100/h. NINGUNO aguanta ráfagas: por eso ya NO se empieza
-// siempre por el mismo, sino que cada fondo arranca en un proxy distinto (rotación)
-// para repartir la carga. (Desde file:// nada de esto funciona de forma fiable.)
+// Estado real a jun-2026 (comprobado en consola): de los proxies públicos solo
+// corsproxy.io responde con CORS válido, y SOLO desde *.github.io. codetabs da
+// HTTP 400; allorigins y cors.x2u.in ya no mandan Access-Control-Allow-Origin.
+// → La única vía robusta (y la ÚNICA que funciona desde Codeberg) es un proxy
+//   propio. Pega abajo la URL de tu Worker y pasará a ser el proxy prioritario.
+
+// ⬇️⬇️⬇️  PEGA AQUÍ TU PROXY PROPIO (Cloudflare Worker / Deno Deploy).  ⬇️⬇️⬇️
+//   Debe terminar de forma que se le pueda añadir la URL destino ya codificada.
+//   Ej.: "https://monitor-fondos.TUUSUARIO.workers.dev/?url="
+//   Déjalo "" si todavía no lo has desplegado.
+const PROXY_PROPIO = "https://monitor-fondos.esperance.workers.dev/?url=";
+// ⬆️⬆️⬆️ ─────────────────────────────────────────────────────────────── ⬆️⬆️⬆️
+
+const _PROPIO = PROXY_PROPIO
+  ? [{ name:"propio", json:false, url: u => PROXY_PROPIO + encodeURIComponent(u) }]
+  : [];
 const _CORSPROXY = { name:"corsproxy", json:false, url: u => `https://corsproxy.io/?url=${encodeURIComponent(u)}` };
-const _BASE = [
+const _BASE = [   // respaldos públicos: hoy casi todos rotos, se dejan por si reviven
   { name:"codetabs",   json:false, url: u => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(u)}` },
   { name:"allorigins", json:false, url: u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}` },
   { name:"x2u",        json:false, url: u => `https://cors.x2u.in/${u}`                                   },
   { name:"allo-json",  json:true,  url: u => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}` },
 ];
-// corsproxy.io solo es gratis desde orígenes whitelisted (github.io, localhost…).
-// Desde codeberg.page o dominio propio devuelve 403, así que ahí ni lo intentamos.
 const _H = location.hostname;
 const _CORSPROXY_OK = /(^|\.)github\.io$/i.test(_H) || _H === "localhost" || _H === "127.0.0.1";
-const PROXIES = _CORSPROXY_OK ? [_CORSPROXY, ..._BASE] : _BASE;
+// Orden: proxy propio (si existe) → corsproxy.io (solo en github.io) → respaldos.
+const PROXIES = [ ..._PROPIO, ...(_CORSPROXY_OK ? [_CORSPROXY] : []), ..._BASE ];
+const HAY_PROPIO = _PROPIO.length > 0;
 
 // Detecta respuestas-basura: muros anti-bot (FT/Cloudflare/Akamai), captchas,
 // avisos de rate-limit del proxy, o cuerpos truncados. Devolver esto al parser
@@ -600,7 +610,9 @@ async function iniciar() {
       const { f, i } = pend[cursor++];
       await sleep(150 + Math.random() * 250);             // throttle + jitter
       try {
-        const html   = await fetchHTML(f.url, i % PROXIES.length);
+        // Con proxy propio: empezar siempre por él (índice 0). Sin él: rotar.
+        const start  = HAY_PROPIO ? 0 : (i % PROXIES.length);
+        const html   = await fetchHTML(f.url, start);
         const parser = getParser(f.url);
         const result = parser ? parser(html, f.url) : null;
         result ? rowOK(i, result)
@@ -620,10 +632,12 @@ async function iniciar() {
     "Última actualización: " + new Date().toLocaleString("es-ES");
   setBusy(false);
 
-  document.getElementById("notes").innerHTML = `
-    <span>📂 <b>Si falla en bloque:</b> ábrelo desde la URL <b>github.io</b>, no con doble clic (file://). corsproxy.io solo da servicio gratuito a orígenes como *.github.io.</span>
-    <span>🔁 <b>Si fallan "algunos" de forma intermitente:</b> es rate-limit de los proxies gratuitos. Vuelve a pulsar <b>Actualizar</b> pasados unos segundos; los que fallaron suelen entrar a la segunda.</span>
-    <span>⚠ <b>Financial Times:</b> anti-bot agresivo + páginas grandes (tope de 1 MB en corsproxy). Es el origen más frágil; cuando puedas, duplica esos ISIN en Fundsquare.</span>
+  const aviso = HAY_PROPIO
+    ? `<span>✅ <b>Proxy propio activo.</b> Funciona desde cualquier host (Codeberg incluido) y sin rate-limits de terceros.</span>`
+    : `<span>🛠️ <b>Sin proxy propio.</b> Los proxies públicos gratuitos están casi todos caídos (codetabs 400; allorigins y x2u sin CORS). Hoy solo corsproxy.io funciona, y <b>solo desde github.io</b>. Para que esto vaya fiable —y para que funcione en Codeberg— despliega tu Worker y pega su URL en <code>PROXY_PROPIO</code>.</span>`;
+  document.getElementById("notes").innerHTML = aviso + `
+    <span>⚠ <b>Financial Times:</b> anti-bot agresivo. Un proxy propio con User-Agent de navegador suele saltárselo; si Cloudflare te lo bloquea, prueba Deno Deploy.</span>
+    <span>🔎 <b>Fundsquare "sin datos":</b> las fichas /security/summary ya no traen el td "Last NAV" que espera el parser. Es un fallo de parser, no de proxy.</span>
     <span>⛔ <b>Bloomberg (N5116:SM):</b> prohíbe scraping. Sustitúyelo por su URL de FT o Fundsquare.</span>
     <span>💡 Haz clic en cualquier fila para abrir la página original del fondo.</span>`;
 }
