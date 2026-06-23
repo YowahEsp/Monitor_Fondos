@@ -302,31 +302,61 @@ const FONDOS = [
 ];
 
 // ── PROXIES ───────────────────────────────────────────────────────────────────
-// Se prueban en orden hasta que uno responda. Desde un origen real (GitHub Pages)
-// corsproxy.io funciona y es el más rápido → va primero. El resto son respaldo
-// por si alguno cae. (Desde file:// nada de esto funciona de forma fiable.)
-const PROXIES = [
-  { url: u => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,                 json: false },
-  { url: u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,        json: false },
-  { url: u => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(u)}`,  json: false },
-  { url: u => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`,        json: true  },
+// Estado a 2026: corsproxy.io sigue siendo gratis desde orígenes *.github.io
+// (no necesita API key ahí), pero aplica rate-limit agresivo y tope de 1 MB por
+// respuesta. allorigins va lento y se satura con facilidad; codetabs limita a
+// ~5 req/s; cors.x2u.in ~100/h. NINGUNO aguanta ráfagas: por eso ya NO se empieza
+// siempre por el mismo, sino que cada fondo arranca en un proxy distinto (rotación)
+// para repartir la carga. (Desde file:// nada de esto funciona de forma fiable.)
+const _CORSPROXY = { name:"corsproxy", json:false, url: u => `https://corsproxy.io/?url=${encodeURIComponent(u)}` };
+const _BASE = [
+  { name:"codetabs",   json:false, url: u => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(u)}` },
+  { name:"allorigins", json:false, url: u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}` },
+  { name:"x2u",        json:false, url: u => `https://cors.x2u.in/${u}`                                   },
+  { name:"allo-json",  json:true,  url: u => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}` },
 ];
+// corsproxy.io solo es gratis desde orígenes whitelisted (github.io, localhost…).
+// Desde codeberg.page o dominio propio devuelve 403, así que ahí ni lo intentamos.
+const _H = location.hostname;
+const _CORSPROXY_OK = /(^|\.)github\.io$/i.test(_H) || _H === "localhost" || _H === "127.0.0.1";
+const PROXIES = _CORSPROXY_OK ? [_CORSPROXY, ..._BASE] : _BASE;
 
-async function fetchHTML(url) {
-  for (const px of PROXIES) {
+// Detecta respuestas-basura: muros anti-bot (FT/Cloudflare/Akamai), captchas,
+// avisos de rate-limit del proxy, o cuerpos truncados. Devolver esto al parser
+// daba el engañoso "estructura cambiada" cuando en realidad era un bloqueo.
+function pareceValido(html) {
+  if (!html || html.length < 800) return false;          // demasiado corto = interstitial/error
+  const cab = html.slice(0, 4000).toLowerCase();
+  const trampas = [
+    "pardon our interruption", "attention required", "request unsuccessful",
+    "are you a human", "captcha", "access denied", "akamai",
+    "rate limit", "too many requests", "enable javascript and cookies"
+  ];
+  if (trampas.some(t => cab.includes(t))) return false;
+  return true;
+}
+
+// startIdx = proxy por el que empieza este fondo (rotación). Recorre TODOS.
+async function fetchHTML(url, startIdx = 0) {
+  const n = PROXIES.length;
+  let ultimoFallo = "sin respuesta de ningún proxy";
+  for (let k = 0; k < n; k++) {
+    const px = PROXIES[(startIdx + k) % n];
     try {
       const r = await fetch(px.url(url), { signal: AbortSignal.timeout(15000) });
-      if (!r.ok) continue;
+      if (!r.ok) { ultimoFallo = px.name + " HTTP " + r.status; continue; }
+      let html = "";
       if (px.json) {
         const d = await r.json();
-        if (d.contents && d.contents.length > 400) return d.contents;
+        html = (d && d.contents) ? d.contents : "";
       } else {
-        const t = await r.text();
-        if (t.length > 400) return t;
+        html = await r.text();
       }
-    } catch(_) { /* probar el siguiente proxy */ }
+      if (pareceValido(html)) return html;                // ← contenido real
+      ultimoFallo = px.name + " (bloqueo/anti-bot)";      // si no, siguiente proxy
+    } catch(_) { ultimoFallo = px.name + " (timeout/red)"; }
   }
-  throw new Error("Bloqueado (mejor desde GitHub Pages, no con file://)");
+  const e = new Error("BLOQUEO"); e.detalle = ultimoFallo; throw e;
 }
 
 // ── PARSERS ────────────────────────────────────────────────────────────────────
@@ -558,35 +588,43 @@ async function iniciar() {
   document.getElementById("notes").innerHTML = "";
   renderRows();
 
-  // Consultas en PARALELO, máximo 5 a la vez (rápido sin saturar el proxy).
-  // Las filas se rellenan según van llegando los datos.
+  // Consultas en paralelo PERO con freno: 3 workers, arranque escalonado y un
+  // pequeño retardo con jitter entre peticiones. Los proxies gratuitos tumban
+  // las ráfagas (429/“rate limit”); espaciarlas un poco evita justamente el
+  // patrón “unos cargan y otros no”. Cada fondo además rota el proxy inicial.
   const pend = FONDOS.map((f, i) => ({ f, i })).filter(x => !x.f.bloqueado && !x.f.separador);
   let cursor = 0;
-  async function worker() {
+  async function worker(wid) {
+    await sleep(wid * 250);                               // arranque escalonado
     while (cursor < pend.length) {
       const { f, i } = pend[cursor++];
+      await sleep(150 + Math.random() * 250);             // throttle + jitter
       try {
-        const html   = await fetchHTML(f.url);
+        const html   = await fetchHTML(f.url, i % PROXIES.length);
         const parser = getParser(f.url);
         const result = parser ? parser(html, f.url) : null;
-        result ? rowOK(i, result) : rowErr(i, "Sin datos (estructura cambiada o bloqueado)");
+        result ? rowOK(i, result)
+               : rowErr(i, "Sin datos — ¿anti-bot o estructura cambiada?");
       } catch(e) {
-        rowErr(i, e.message);
+        rowErr(i, e.message === "BLOQUEO"
+          ? "Proxies saturados/anti-bot — reintenta · " + (e.detalle || "")
+          : e.message);
       }
       done++;
       setProgress(done, total);
     }
   }
-  await Promise.all(Array.from({ length: 5 }, worker));
+  await Promise.all(Array.from({ length: 3 }, (_, w) => worker(w)));
 
   document.getElementById("last-update").textContent =
     "Última actualización: " + new Date().toLocaleString("es-ES");
   setBusy(false);
 
   document.getElementById("notes").innerHTML = `
-    <span>📂 <b>Si ves "bloqueado" en todo:</b> estás abriendo el archivo con doble clic (file://), y los navegadores limitan esas peticiones. Súbelo a GitHub Pages (como tus otros sitios) y ábrelo desde la URL github.io — ahí los proxies funcionan.</span>
-    <span>⚠ <b>Financial Times (8 fondos):</b> FT aplica anti-bot agresivo y puede fallar aun en GitHub Pages. Esos fondos con ISIN puedes buscarlos también en Fundsquare.</span>
-    <span>⛔ <b>Bloomberg (N5116:SM):</b> prohíbe scraping. Busca el ISIN de ese fondo y añade su URL de FT o Fundsquare en la lista del archivo.</span>
+    <span>📂 <b>Si falla en bloque:</b> ábrelo desde la URL <b>github.io</b>, no con doble clic (file://). corsproxy.io solo da servicio gratuito a orígenes como *.github.io.</span>
+    <span>🔁 <b>Si fallan "algunos" de forma intermitente:</b> es rate-limit de los proxies gratuitos. Vuelve a pulsar <b>Actualizar</b> pasados unos segundos; los que fallaron suelen entrar a la segunda.</span>
+    <span>⚠ <b>Financial Times:</b> anti-bot agresivo + páginas grandes (tope de 1 MB en corsproxy). Es el origen más frágil; cuando puedas, duplica esos ISIN en Fundsquare.</span>
+    <span>⛔ <b>Bloomberg (N5116:SM):</b> prohíbe scraping. Sustitúyelo por su URL de FT o Fundsquare.</span>
     <span>💡 Haz clic en cualquier fila para abrir la página original del fondo.</span>`;
 }
 
