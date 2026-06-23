@@ -380,7 +380,13 @@ const ISIN_RE = /\b([A-Z]{2}[A-Z0-9]{9}\d)\b/;
    Previous NAV). Si fallara, se recurre al método antiguo por celdas <td>. */
 function parseFundsquare(html, url) {
   const doc = new DOMParser().parseFromString(html, "text/html");
-  const txt = doc.body.textContent.replace(/\u00a0/g, " ").replace(/[ \t]+/g, " ");
+
+  // OJO: el textContent crudo concatena el contenido de celdas contiguas SIN
+  // espacios (…</td><td>… no separa), así que la fecha y el precio llegaban
+  // pegados ("22/06/2026289.49") y el patrón no los reconocía. Insertamos un
+  // separador al final de cada celda/bloque para que queden sueltos.
+  doc.querySelectorAll("td, th, tr, br, p, li, div").forEach(el => el.append(" "));
+  const txt = doc.body.textContent.replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
 
   // ISIN: primer código del cuerpo (respaldo: pista de la URL).
   const isinM = txt.match(ISIN_RE);
@@ -394,8 +400,10 @@ function parseFundsquare(html, url) {
     nombre = after.slice(0, corte > 0 ? corte : 120).replace(/\s+/g, " ").trim() || isin;
   }
 
-  // Método 1 (texto): primer "DD/MM/YYYY  precio  DIVISA  ±cambio %".
-  const m = txt.match(/(\d{2}\/\d{2}\/\d{4})\s+([\d.,]+)\s+([A-Z]{3})\s+([-+]?\d+(?:[.,]\d+)?)\s*%/);
+  // Método 1 (texto): primer "DD/MM/YYYY precio DIVISA ±cambio %".
+  // Espaciado tolerante (\s*) por si alguna celda no quedó separada.
+  // El primer match es el dato bueno: Last NAV si lo hay, si no Previous NAV.
+  const m = txt.match(/(\d{2}\/\d{2}\/\d{4})\s*([\d.,]+)\s*([A-Z]{3})\s*([-+]?\d+(?:[.,]\d+)?)\s*%/);
   if (m) {
     return { isin, nombre, fecha: m[1],
       nav: m[2].replace(/,/g, ""),            // formato anglosajón: quitar comas de miles
@@ -405,11 +413,11 @@ function parseFundsquare(html, url) {
 
   // Método 2 (respaldo): estructura antigua con celda "Last NAV".
   const tds = [...doc.querySelectorAll("td")];
-  const idx = tds.findIndex(td => /^Last NAV$/i.test(td.textContent.trim()));
+  const idx = tds.findIndex(td => /^Last NAV\s*$/i.test(td.textContent.trim()));
   if (idx >= 0 && tds[idx+1] && tds[idx+2]) {
     const fecha   = tds[idx+1].textContent.trim();
     const navCell = tds[idx+2].textContent.replace(/\s+/g, " ").trim();
-    const mm = navCell.match(/([\d.,]+)\s+([A-Z]{3})\s+([-+]?[\d.,]+)\s*%/);
+    const mm = navCell.match(/([\d.,]+)\s*([A-Z]{3})\s*([-+]?[\d.,]+)\s*%/);
     if (mm) return { isin, nombre, fecha,
       nav: mm[1].replace(/,/g, ""),
       var_pct: mm[3].replace(",", ".") + "%",
@@ -660,7 +668,7 @@ async function iniciar() {
     : `<span>🛠️ <b>Sin proxy propio.</b> Los proxies públicos gratuitos están casi todos caídos (codetabs 400; allorigins y x2u sin CORS). Hoy solo corsproxy.io funciona, y <b>solo desde github.io</b>. Para que esto vaya fiable —y para que funcione en Codeberg— despliega tu Worker y pega su URL en <code>PROXY_PROPIO</code>.</span>`;
   document.getElementById("notes").innerHTML = aviso + `
     <span>⚠ <b>Financial Times:</b> anti-bot agresivo. Un proxy propio con User-Agent de navegador suele saltárselo; si Cloudflare te lo bloquea, prueba Deno Deploy.</span>
-    <span>🔎 <b>Fundsquare "sin datos":</b> las fichas /security/summary ya no traen el td "Last NAV" que espera el parser. Es un fallo de parser, no de proxy.</span>
+    <span>🔎 <b>Fundsquare:</b> lee las fichas /security/summary y /security/price, en día hábil o festivo (toma "Previous NAV" si el mercado está cerrado).</span>
     <span>⛔ <b>Bloomberg (N5116:SM):</b> prohíbe scraping. Sustitúyelo por su URL de FT o Fundsquare.</span>
     <span>💡 Haz clic en cualquier fila para abrir la página original del fondo.</span>`;
 }
