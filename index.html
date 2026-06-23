@@ -372,27 +372,50 @@ async function fetchHTML(url, startIdx = 0) {
 // ── PARSERS ────────────────────────────────────────────────────────────────────
 const ISIN_RE = /\b([A-Z]{2}[A-Z0-9]{9}\d)\b/;
 
-/* Fundsquare: td "Last NAV" | fecha | "NAV DIV ±%" */
+/* Fundsquare. Lee el NAV venga como venga:
+   - páginas /security/price Y /security/summary
+   - mercado abierto ("Last NAV …") o festivo/cerrado ("Previous NAV …")
+   Estrategia: localizar en el texto el primer bloque "fecha precio DIVISA ±%".
+   En ambos casos ese primer match es el dato bueno (Last NAV si lo hay, si no
+   Previous NAV). Si fallara, se recurre al método antiguo por celdas <td>. */
 function parseFundsquare(html, url) {
   const doc = new DOMParser().parseFromString(html, "text/html");
-  const title = doc.title || "";
-  const parts  = title.split("|").map(s => s.trim());
-  const ii = parts.findIndex(p => { const m = ISIN_RE.exec(p); return m && m[0] === p; });
-  const isin   = ii >= 0 ? parts[ii] : (ISIN_RE.exec(title)||[])[1] || "?";
-  const nombre = (ii >= 0 && ii + 1 < parts.length) ? parts[ii + 1] : isin;
+  const txt = doc.body.textContent.replace(/\u00a0/g, " ").replace(/[ \t]+/g, " ");
 
+  // ISIN: primer código del cuerpo (respaldo: pista de la URL).
+  const isinM = txt.match(ISIN_RE);
+  const isin  = isinM ? isinM[1] : (isinHint(url) || "?");
+
+  // Nombre: texto tras el ISIN hasta el primer marcador conocido.
+  let nombre = isin;
+  if (isinM) {
+    const after = txt.slice(isinM.index + isinM[1].length);
+    const corte = after.search(/Last NAV|Previous NAV|NAV calc|Documents|Overview|Add to|Open glossary/i);
+    nombre = after.slice(0, corte > 0 ? corte : 120).replace(/\s+/g, " ").trim() || isin;
+  }
+
+  // Método 1 (texto): primer "DD/MM/YYYY  precio  DIVISA  ±cambio %".
+  const m = txt.match(/(\d{2}\/\d{2}\/\d{4})\s+([\d.,]+)\s+([A-Z]{3})\s+([-+]?\d+(?:[.,]\d+)?)\s*%/);
+  if (m) {
+    return { isin, nombre, fecha: m[1],
+      nav: m[2].replace(/,/g, ""),            // formato anglosajón: quitar comas de miles
+      var_pct: m[4].replace(",", ".") + "%",
+      divisa: m[3], fuente: "Fundsquare" };
+  }
+
+  // Método 2 (respaldo): estructura antigua con celda "Last NAV".
   const tds = [...doc.querySelectorAll("td")];
-  const idx = tds.findIndex(td => td.textContent.trim() === "Last NAV");
-  if (idx < 0 || !tds[idx+1] || !tds[idx+2]) return null;
-
-  const fecha   = tds[idx+1].textContent.trim();
-  const navCell = tds[idx+2].textContent.replace(/\s+/g, " ").trim();
-  const m = navCell.match(/([\d.,]+)\s+([A-Z]{3})\s+([-+]?[\d.,]+)\s*%/);
-  if (!m) return null;
-
-  return { isin, nombre, fecha,
-    nav: m[1].replace(",",""),   // Anglo format: quitar coma de miles
-    var_pct: m[3] + "%", divisa: m[2], fuente: "Fundsquare" };
+  const idx = tds.findIndex(td => /^Last NAV$/i.test(td.textContent.trim()));
+  if (idx >= 0 && tds[idx+1] && tds[idx+2]) {
+    const fecha   = tds[idx+1].textContent.trim();
+    const navCell = tds[idx+2].textContent.replace(/\s+/g, " ").trim();
+    const mm = navCell.match(/([\d.,]+)\s+([A-Z]{3})\s+([-+]?[\d.,]+)\s*%/);
+    if (mm) return { isin, nombre, fecha,
+      nav: mm[1].replace(/,/g, ""),
+      var_pct: mm[3].replace(",", ".") + "%",
+      divisa: mm[2], fuente: "Fundsquare" };
+  }
+  return null;
 }
 
 /* AVL: "Aktueller Kurs (DD.MM.YYYY) ±chg EUR (±pct %) price EUR" */
