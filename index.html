@@ -492,11 +492,10 @@ function ftFecha(s) {
   return m ? `${m[2].padStart(2,"0")}/${MES[m[1]]||"??"}/${m[3]}` : s;
 }
 
-/* Investing.com. El nombre y el código salen de las metaetiquetas; el precio,
-   la variación diaria y la fecha del bloque de cotización del cuerpo
-   ("264,880 +1,531 (+0,58%)  ·  22/06 - Info retrasada. Valores en EUR").
-   El patrón del % se ancla al precio de la meta para no confundirlo con otros
-   números de la página. Investing da la fecha como DD/MM; le añadimos el año. */
+/* Investing.com. Nombre y código de las metaetiquetas. Precio y variación de las
+   celdas de cotización, que Investing marca con clases estables: el precio lleva
+   "pid-XXXX-last" y la variación porcentual "pid-XXXX-pcp". Si esas clases
+   cambiaran, hay respaldo por meta-description (precio) y por texto (variación). */
 function parseInvesting(html, url) {
   const doc = new DOMParser().parseFromString(html, "text/html");
   const meta = n => (doc.querySelector(`meta[property="${n}"]`) ||
@@ -511,30 +510,36 @@ function parseInvesting(html, url) {
     .replace(/\s*-\s*Investing\.com.*$/i, "")
     .replace(/\s+/g, " ").trim() || isin;
 
-  const desc  = meta("og:description") || meta("description") || "";
-  const pMeta = (desc.match(/[úu]ltimo precio:?\s*([\d.,]+)/i) || [])[1] || null;
+  // Lee la primera celda cuya clase sea pid-<n>-<sufijo> (last = precio, pcp = %).
+  const pickPid = suf => {
+    const el = doc.querySelector(`[class*="pid-"][class*="-${suf}"]`);
+    return el ? el.textContent.replace(/[()\s]/g, "") : null;
+  };
 
-  const txt = doc.body.textContent.replace(/\u00a0/g, " ").replace(/\s+/g, " ");
-
-  // Precio: el de la meta (fiable); si no, el del bloque de cotización.
-  let nav = pMeta;
-  if (!nav) nav = (txt.match(/([\d][\d.,]*)\s*[-+][\d.,]+\s*\(\s*[-+]/) || [])[1];
+  // Precio: clase pid-last; respaldo: meta-description.
+  let nav = pickPid("last");
+  if (!nav) nav = (meta("og:description").match(/[úu]ltimo precio:?\s*([\d.,]+)/i) || [])[1] || null;
   if (!nav) return null;
+  nav = nav.replace(/\./g, "").replace(",", ".");          // español → punto decimal
 
-  // Variación %: "<precio> ±cambio (±X %)", anclado al precio para evitar líos.
+  // Variación %: clase pid-pcp; respaldo: patrón "(±X %)" en el texto.
   let var_pct = "N/D";
-  const reCot = pMeta
-    ? new RegExp(pMeta.replace(/\./g, "\\.").replace(/,/g, "[.,]") + "\\s*[-+][\\d.,]+\\s*\\(\\s*([-+][\\d.,]+)\\s*%")
-    : /[\d][\d.,]*\s*[-+][\d.,]+\s*\(\s*([-+][\d.,]+)\s*%/;
-  const cm = txt.match(reCot);
-  if (cm) var_pct = cm[1].replace(",", ".") + "%";
+  let pcp = pickPid("pcp");
+  if (!pcp) {
+    const txt = doc.body.textContent.replace(/\u00a0/g, " ").replace(/\s+/g, " ");
+    pcp = (txt.match(/\(\s*([-+][\d.,]+)\s*%\s*\)/) || [])[1];
+  }
+  if (pcp) {
+    const mm = pcp.match(/([-+]?[\d.,]+)/);
+    if (mm) var_pct = mm[1].replace(",", ".") + "%";
+  }
 
   // Fecha "22/06 - Info retrasada" (DD/MM → añadimos el año en curso).
   let fecha = "N/D";
-  const fM = txt.match(/(\d{2}\/\d{2})\s*-\s*Info/i) || txt.match(/(\d{2}\/\d{2}\/\d{4})/);
+  const txt2 = doc.body.textContent.replace(/\u00a0/g, " ").replace(/\s+/g, " ");
+  const fM = txt2.match(/(\d{2}\/\d{2})\s*-\s*Info/i) || txt2.match(/(\d{2}\/\d{2}\/\d{4})/);
   if (fM) fecha = fM[1].length === 5 ? `${fM[1]}/${new Date().getFullYear()}` : fM[1];
 
-  nav = nav.replace(/\./g, "").replace(",", ".");   // español → punto decimal
   return { isin, nombre, fecha, nav, var_pct, divisa: "EUR", fuente: "Investing" };
 }
 
