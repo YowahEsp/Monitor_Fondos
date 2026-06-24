@@ -293,7 +293,7 @@ const FONDOS = [
   { url: "https://www.avl-investmentfonds.de/fonds/details/LU0757431738" },
   { url: "https://markets.ft.com/data/funds/tearsheet/summary?s=IE00BGHQF524:EUR" },
   { url: "https://markets.ft.com/data/funds/tearsheet/summary?s=IE00BDR0JY05:EUR" },
-  { url: "bloqueado:N5116:SM", bloqueado: true, nombre: "N5116:SM", nota: "Bloomberg — scraping prohibido" },
+  { url: "https://es.investing.com/funds/azvalor-global-value-pp" },
 
   // ── De interés ──────────────────────────────────────────────────────────────
   { separador: true, titulo: "De interés" },
@@ -492,10 +492,57 @@ function ftFecha(s) {
   return m ? `${m[2].padStart(2,"0")}/${MES[m[1]]||"??"}/${m[3]}` : s;
 }
 
+/* Investing.com. El nombre y el código salen de las metaetiquetas; el precio,
+   la variación diaria y la fecha del bloque de cotización del cuerpo
+   ("264,880 +1,531 (+0,58%)  ·  22/06 - Info retrasada. Valores en EUR").
+   El patrón del % se ancla al precio de la meta para no confundirlo con otros
+   números de la página. Investing da la fecha como DD/MM; le añadimos el año. */
+function parseInvesting(html, url) {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const meta = n => (doc.querySelector(`meta[property="${n}"]`) ||
+                     doc.querySelector(`meta[name="${n}"]`) || {}).content || "";
+
+  const title = meta("og:title") || doc.title || "";
+  const codM  = title.match(/\(([A-Z0-9]{6,})\)/);
+  const isin  = codM ? codM[1] : (isinHint(url) || "?");
+  const nombre = title
+    .replace(/^Fondo\s+/i, "")
+    .replace(/\s*\([^)]*\)\s*/, " ")
+    .replace(/\s*-\s*Investing\.com.*$/i, "")
+    .replace(/\s+/g, " ").trim() || isin;
+
+  const desc  = meta("og:description") || meta("description") || "";
+  const pMeta = (desc.match(/[úu]ltimo precio:?\s*([\d.,]+)/i) || [])[1] || null;
+
+  const txt = doc.body.textContent.replace(/\u00a0/g, " ").replace(/\s+/g, " ");
+
+  // Precio: el de la meta (fiable); si no, el del bloque de cotización.
+  let nav = pMeta;
+  if (!nav) nav = (txt.match(/([\d][\d.,]*)\s*[-+][\d.,]+\s*\(\s*[-+]/) || [])[1];
+  if (!nav) return null;
+
+  // Variación %: "<precio> ±cambio (±X %)", anclado al precio para evitar líos.
+  let var_pct = "N/D";
+  const reCot = pMeta
+    ? new RegExp(pMeta.replace(/\./g, "\\.").replace(/,/g, "[.,]") + "\\s*[-+][\\d.,]+\\s*\\(\\s*([-+][\\d.,]+)\\s*%")
+    : /[\d][\d.,]*\s*[-+][\d.,]+\s*\(\s*([-+][\d.,]+)\s*%/;
+  const cm = txt.match(reCot);
+  if (cm) var_pct = cm[1].replace(",", ".") + "%";
+
+  // Fecha "22/06 - Info retrasada" (DD/MM → añadimos el año en curso).
+  let fecha = "N/D";
+  const fM = txt.match(/(\d{2}\/\d{2})\s*-\s*Info/i) || txt.match(/(\d{2}\/\d{2}\/\d{4})/);
+  if (fM) fecha = fM[1].length === 5 ? `${fM[1]}/${new Date().getFullYear()}` : fM[1];
+
+  nav = nav.replace(/\./g, "").replace(",", ".");   // español → punto decimal
+  return { isin, nombre, fecha, nav, var_pct, divisa: "EUR", fuente: "Investing" };
+}
+
 function getParser(url) {
   if (url.includes("markets.ft.com"))        return parseFT;
   if (url.includes("fundsquare.net"))        return parseFundsquare;
   if (url.includes("avl-investmentfonds.de"))return parseAVL;
+  if (url.includes("investing.com"))         return parseInvesting;
   return null;
 }
 
@@ -531,6 +578,7 @@ function fuenteLabel(url) {
   if (url.includes("markets.ft.com"))         return "FT";
   if (url.includes("fundsquare.net"))         return "Fundsquare";
   if (url.includes("avl-investmentfonds.de")) return "AVL";
+  if (url.includes("investing.com"))          return "Investing";
   return "—";
 }
 function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
@@ -669,7 +717,7 @@ async function iniciar() {
   document.getElementById("notes").innerHTML = aviso + `
     <span>⚠ <b>Financial Times:</b> anti-bot agresivo. Un proxy propio con User-Agent de navegador suele saltárselo; si Cloudflare te lo bloquea, prueba Deno Deploy.</span>
     <span>🔎 <b>Fundsquare:</b> lee las fichas /security/summary y /security/price, en día hábil o festivo (toma "Previous NAV" si el mercado está cerrado).</span>
-    <span>⛔ <b>Bloomberg (N5116:SM):</b> prohíbe scraping. Sustitúyelo por su URL de FT o Fundsquare.</span>
+    <span>📈 <b>Investing.com (azValor Global Value PP):</b> sustituye al antiguo Bloomberg. Lee precio, variación y fecha del bloque de cotización.</span>
     <span>💡 Haz clic en cualquier fila para abrir la página original del fondo.</span>`;
 }
 
